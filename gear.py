@@ -771,9 +771,13 @@ with tab3:
             
             if tier:
                 # Usar el MÁXIMO entre el precio histórico promedio y la oferta más baja actual
+                if st.session_state.active_lowest_prices.get(code) is None:
+                    lowest = 0
+                else:
+                    lowest = st.session_state.active_lowest_prices.get(code, 0)
                 ref_price = max(
                     stats["mean_price"], 
-                    st.session_state.active_lowest_prices.get(code, 0)
+                    lowest
                 )
                 if tier not in tier_prices:
                     tier_prices[tier] = []
@@ -822,3 +826,4 @@ with tab3:
 
 
 st.caption("⚠️ Solo se consideran items con condición 100% en todas las consultas")
+
