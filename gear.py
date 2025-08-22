@@ -417,9 +417,13 @@ def calculate_loot_case_value(historical_stats, active_lowest_prices):
         
         if tier:
             # Usar el MÁXIMO entre el precio histórico promedio y la oferta más baja actual
+            if active_lowest_prices.get(code) is None:
+                lowest = 0
+            else:
+                lowest = active_lowest_prices.get(code, 0)
             ref_price = max(
                 stats["mean_price"], 
-                active_lowest_prices.get(code, 0)
+                lowest
             )
             if tier not in tier_prices:
                 tier_prices[tier] = []
@@ -815,5 +819,6 @@ with tab3:
         st.info("ℹ️ Actualiza los datos para ver el valor del loot case")
     else:
         st.info("🔄 Comienza actualizando los datos")
+
 
 st.caption("⚠️ Solo se consideran items con condición 100% en todas las consultas")
