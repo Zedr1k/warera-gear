@@ -32,20 +32,21 @@ EQUIPMENT_TYPES = {
         }
     },
     "weapons": {
-        "types": ["knife", "gun", "rifle", "sniper", "tank"],  # Agregado knife
+        "types": ["knife", "gun", "rifle", "sniper", "tank", "jet"],  # Agregado jet
         "suffixes": [""],
         "ranges": {
-            "knife": {"min": 21, "max": 45},   # Nuevo rango para knife
+            "knife": {"min": 21, "max": 45},
             "gun": {"min": 51, "max": 70},
             "rifle": {"min": 75, "max": 105},
             "sniper": {"min": 110, "max": 140},
-            "tank": {"min": 140, "max": 190}
+            "tank": {"min": 140, "max": 190},
+            "jet": {"min": 200, "max": 250}  # Rango estimado para jet
         }
     }
 }
 
-# Probabilidades de loot cases
-LOOT_CASE_RATES = {
+# Probabilidades de loot cases para armaduras
+LOOT_CASE_ARMOR_RATES = {
     "T1": 0.62,
     "T2": 0.30,
     "T3": 0.071,
@@ -53,12 +54,23 @@ LOOT_CASE_RATES = {
     "T5": 0.0005
 }
 
+# Probabilidades de loot cases para armas (con jet)
+LOOT_CASE_WEAPON_RATES = {
+    "T1": 0.62,
+    "T2": 0.30,
+    "T3": 0.071,
+    "T4": 0.0085,
+    "T5": 0.0004,  # Tank reducido a 0.04%
+    "T6": 0.0001   # Jet añadido con 0.01%
+}
+
 # Costos de merge por tier
 MERGE_COSTS = {
     1: 2,
     2: 4,
     3: 8,
-    4: 16
+    4: 16,
+    5: 32  # Agregado costo para merge de tier 5 (tank a jet)
 }
 
 # Inicializar estado de la sesión
@@ -351,7 +363,8 @@ def analyze_merging_viability(historical_stats, active_lowest_prices):
         ("knife", 1, "gun", 2),
         ("gun", 2, "rifle", 3),
         ("rifle", 3, "sniper", 4),
-        ("sniper", 4, "tank", 5)
+        ("sniper", 4, "tank", 5),
+        ("tank", 5, "jet", 6)  # Nuevo merge: tank a jet
     ]
     
     for current_weapon, current_tier, next_weapon, next_tier in weapon_merges:
@@ -396,52 +409,72 @@ def analyze_merging_viability(historical_stats, active_lowest_prices):
     return analysis
 
 def calculate_loot_case_value(historical_stats, active_lowest_prices):
-    """Calcula el valor esperado de abrir un loot case usando el precio de referencia (máx entre histórico y activo)"""
-    # Agrupar items por tier
-    tier_prices = {}
+    """Calcula el valor esperado de abrir un loot case considerando 50% chance de arma y 50% de equipamiento"""
+    # Separar items por tipo (armor vs weapons)
+    armor_tier_prices = {}
+    weapon_tier_prices = {}
+    
     for code, stats in historical_stats.items():
-        # Determinar tier
-        tier = None
-        if code[-1].isdigit():
+        # Determinar si es armor o weapon y su tier
+        if code[-1].isdigit():  # Es armor (termina con número)
             tier = int(code[-1])
-        elif code == "knife":
-            tier = 1
-        elif code == "gun":
-            tier = 2
-        elif code == "rifle":
-            tier = 3
-        elif code == "sniper":
-            tier = 4
-        elif code == "tank":
-            tier = 5
-        
-        if tier:
             # Usar el MÁXIMO entre el precio histórico promedio y la oferta más baja actual
-            if active_lowest_prices.get(code) is None:
-                lowest = 0
-            else:
-                lowest = active_lowest_prices.get(code, 0)
             ref_price = max(
                 stats["mean_price"], 
-                lowest
+                active_lowest_prices.get(code, 0)
             )
-            if tier not in tier_prices:
-                tier_prices[tier] = []
-            tier_prices[tier].append(ref_price)
+            if tier not in armor_tier_prices:
+                armor_tier_prices[tier] = []
+            armor_tier_prices[tier].append(ref_price)
+        else:  # Es weapon
+            # Mapear weapon a tier
+            weapon_to_tier = {
+                "knife": 1,
+                "gun": 2,
+                "rifle": 3,
+                "sniper": 4,
+                "tank": 5,
+                "jet": 6
+            }
+            tier = weapon_to_tier.get(code)
+            if tier:
+                # Usar el MÁXIMO entre el precio histórico promedio y la oferta más baja actual
+                ref_price = max(
+                    stats["mean_price"], 
+                    active_lowest_prices.get(code, 0)
+                )
+                if tier not in weapon_tier_prices:
+                    weapon_tier_prices[tier] = []
+                weapon_tier_prices[tier].append(ref_price)
     
-    # Calcular valor promedio por tier
-    tier_avg = {}
-    for tier, prices in tier_prices.items():
-        tier_avg[tier] = mean(prices) if prices else 0
+    # Calcular valor promedio por tier para armor
+    armor_tier_avg = {}
+    for tier, prices in armor_tier_prices.items():
+        armor_tier_avg[tier] = mean(prices) if prices else 0
     
-    # Calcular valor esperado del loot case
-    expected_value = 0
-    for tier, rate in LOOT_CASE_RATES.items():
+    # Calcular valor promedio por tier para weapons
+    weapon_tier_avg = {}
+    for tier, prices in weapon_tier_prices.items():
+        weapon_tier_avg[tier] = mean(prices) if prices else 0
+    
+    # Calcular valor esperado para armor
+    armor_expected_value = 0
+    for tier, rate in LOOT_CASE_ARMOR_RATES.items():
         tier_num = int(tier[1])  # Convertir "T1" a 1
-        tier_value = tier_avg.get(tier_num, 0)
-        expected_value += rate * tier_value
+        tier_value = armor_tier_avg.get(tier_num, 0)
+        armor_expected_value += rate * tier_value
     
-    return expected_value
+    # Calcular valor esperado para weapons
+    weapon_expected_value = 0
+    for tier, rate in LOOT_CASE_WEAPON_RATES.items():
+        tier_num = int(tier[1])  # Convertir "T1" a 1
+        tier_value = weapon_tier_avg.get(tier_num, 0)
+        weapon_expected_value += rate * tier_value
+    
+    # Valor esperado final (50% chance de armor, 50% chance de weapon)
+    expected_value = 0.5 * armor_expected_value + 0.5 * weapon_expected_value
+    
+    return expected_value, armor_expected_value, weapon_expected_value, armor_tier_avg, weapon_tier_avg
 
 # Generar todos los códigos a analizar
 CODES = generate_codes()
@@ -529,10 +562,11 @@ with col1:
             )
             
             # Calcular valor de loot case
-            st.session_state.loot_case_value = calculate_loot_case_value(
+            expected_value, armor_ev, weapon_ev, armor_tier_avg, weapon_tier_avg = calculate_loot_case_value(
                 historical_stats, 
                 active_lowest_prices
             )
+            st.session_state.loot_case_value = (expected_value, armor_ev, weapon_ev, armor_tier_avg, weapon_tier_avg)
             
             # Mostrar resumen
             st.subheader("📊 Resumen Completo")
@@ -702,7 +736,7 @@ with tab2:
         **¿Cómo se calcula la viabilidad?**
         - Se toma el precio más bajo actual para el tipo y tier
         - Se multiplica por 3 (items necesarios para merge)
-        - Se suma el costo de merge (T1: $2, T2: $4, T3: $8, T4: $16)
+        - Se suma el costo de merge (T1: $2, T2: $4, T3: $8, T4: $16, T5: $32)
         - Se compara con el precio de referencia del tier superior
         - **Precio de referencia**: Máx(Promedio histórico, Oferta más baja actual)
         
@@ -730,100 +764,113 @@ with tab3:
     st.header("🎁 Valor Esperado de un Loot Case")
     
     if st.session_state.loot_case_value is not None:
+        # Desempaquetar los valores
+        expected_value, armor_ev, weapon_ev, armor_tier_avg, weapon_tier_avg = st.session_state.loot_case_value
+        
         # Mostrar valor esperado
-        st.metric("Valor Esperado", f"${st.session_state.loot_case_value:,.2f}")
+        st.metric("Valor Esperado", f"${expected_value:,.2f}")
+        
+        # Mostrar valores por tipo
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Valor Esperado Armaduras", f"${armor_ev:,.2f}")
+        with col2:
+            st.metric("Valor Esperado Armas", f"${weapon_ev:,.2f}")
         
         # Explicación de cálculo
         st.subheader("📊 Cálculo Detallado")
         st.markdown("""
         **Probabilidades de Drop:**
-        - Tier 1: 62%
-        - Tier 2: 30%
-        - Tier 3: 7.1%
-        - Tier 4: 0.85%
-        - Tier 5: 0.05%
+        - **Armaduras:**
+          - Tier 1: 62%
+          - Tier 2: 30%
+          - Tier 3: 7.1%
+          - Tier 4: 0.85%
+          - Tier 5: 0.05%
+        
+        - **Armas:**
+          - Tier 1: 62%
+          - Tier 2: 30%
+          - Tier 3: 7.1%
+          - Tier 4: 0.85%
+          - Tier 5: 0.04% (Tank)
+          - Tier 6: 0.01% (Jet)
         
         **Método de cálculo:**
-        Valor Esperado = Σ (Probabilidad Tier × Precio Referencia Tier)
+        - 50% de probabilidad de obtener armadura
+        - 50% de probabilidad de obtener arma
+        - Valor Esperado = 0.5 × Valor_Armaduras + 0.5 × Valor_Armas
         - **Precio Referencia**: Máx(Promedio histórico, Oferta más baja actual)
         """)
         
         # Mostrar desglose por tier
         st.subheader("🧮 Desglose por Tier")
         
-        # Obtener precios de referencia por tier
-        tier_prices = {}
-        for code, stats in st.session_state.historical_stats.items():
-            # Determinar tier
-            tier = None
-            if code[-1].isdigit():
-                tier = int(code[-1])
-            elif code == "knife":
-                tier = 1
-            elif code == "gun":
-                tier = 2
-            elif code == "rifle":
-                tier = 3
-            elif code == "sniper":
-                tier = 4
-            elif code == "tank":
-                tier = 5
-            
-            if tier:
-                # Usar el MÁXIMO entre el precio histórico promedio y la oferta más baja actual
-                if st.session_state.active_lowest_prices.get(code) is None:
-                    lowest = 0
-                else:
-                    lowest = st.session_state.active_lowest_prices.get(code, 0)
-                ref_price = max(
-                    stats["mean_price"], 
-                    lowest
-                )
-                if tier not in tier_prices:
-                    tier_prices[tier] = []
-                tier_prices[tier].append(ref_price)
-        
-        # Calcular promedios por tier
-        tier_avg = {}
-        for tier, prices in tier_prices.items():
-            tier_avg[tier] = mean(prices) if prices else 0
-        
-        # Crear tabla de desglose
-        breakdown = []
+        # Crear tabla de desglose para armaduras
+        st.markdown("**Armaduras**")
+        armor_breakdown = []
         for tier_num in range(1, 6):
-            rate = LOOT_CASE_RATES[f"T{tier_num}"]
-            price = tier_avg.get(tier_num, 0)
+            rate = LOOT_CASE_ARMOR_RATES[f"T{tier_num}"]
+            price = armor_tier_avg.get(tier_num, 0)
             contribution = rate * price
             
-            breakdown.append({
+            armor_breakdown.append({
                 "Tier": f"T{tier_num}",
                 "Probabilidad": f"{rate*100:.2f}%",
                 "Precio Referencia": f"${price:,.2f}",
                 "Contribución": f"${contribution:,.2f}"
             })
         
-        # Agregar total
-        breakdown.append({
-            "Tier": "TOTAL",
+        # Agregar total armaduras
+        armor_breakdown.append({
+            "Tier": "TOTAL ARMADURAS",
             "Probabilidad": "100%",
             "Precio Referencia": "-",
-            "Contribución": f"${st.session_state.loot_case_value:,.2f}"
+            "Contribución": f"${armor_ev:,.2f}"
         })
         
-        st.dataframe(pd.DataFrame(breakdown), hide_index=True)
+        st.dataframe(pd.DataFrame(armor_breakdown), hide_index=True)
+        
+        # Crear tabla de desglose para armas
+        st.markdown("**Armas**")
+        weapon_breakdown = []
+        for tier_num in range(1, 7):
+            rate_key = f"T{tier_num}"
+            if tier_num <= 5:
+                rate = LOOT_CASE_WEAPON_RATES.get(rate_key, 0)
+            else:
+                rate = LOOT_CASE_WEAPON_RATES.get("T6", 0)  # Jet es T6
+                
+            price = weapon_tier_avg.get(tier_num, 0)
+            contribution = rate * price
+            
+            weapon_breakdown.append({
+                "Tier": f"T{tier_num}",
+                "Probabilidad": f"{rate*100:.2f}%",
+                "Precio Referencia": f"${price:,.2f}",
+                "Contribución": f"${contribution:,.2f}"
+            })
+        
+        # Agregar total armas
+        weapon_breakdown.append({
+            "Tier": "TOTAL ARMAS",
+            "Probabilidad": "100%",
+            "Precio Referencia": "-",
+            "Contribución": f"${weapon_ev:,.2f}"
+        })
+        
+        st.dataframe(pd.DataFrame(weapon_breakdown), hide_index=True)
         
         # Recomendación
         st.subheader("💡 Recomendación")
-        if st.session_state.loot_case_value > 1.0:
-            st.success(f"¡Abrir loot cases es rentable! (Valor esperado: ${st.session_state.loot_case_value:,.2f})")
+        if expected_value > 1.0:
+            st.success(f"¡Abrir loot cases es rentable! (Valor esperado: ${expected_value:,.2f})")
         else:
-            st.warning(f"Actualmente no es rentable abrir loot cases (Valor esperado: ${st.session_state.loot_case_value:,.2f})")
+            st.warning(f"Actualmente no es rentable abrir loot cases (Valor esperado: ${expected_value:,.2f})")
             
     elif st.session_state.historical_stats:
         st.info("ℹ️ Actualiza los datos para ver el valor del loot case")
     else:
         st.info("🔄 Comienza actualizando los datos")
 
-
 st.caption("⚠️ Solo se consideran items con condición 100% en todas las consultas")
-
