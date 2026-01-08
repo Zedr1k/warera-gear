@@ -22,7 +22,7 @@ OFFERS_API = "https://api2.warera.io/trpc/itemOffer.getItemOffers"
 EQUIPMENT_TYPES = {
     "armor": {
         "types": ["helmet", "pants", "gloves", "boots", "chest"],
-        "suffixes": ["1", "2", "3", "4", "5"],  # Agregado tier 1
+        "suffixes": ["1", "2", "3", "4", "5", "6"],  # Agregado tier 1
         "ranges": {
             "1": {"min": 1, "max": 5},   # Nuevo rango para tier 1
             "2": {"min": 4, "max": 10},
@@ -874,3 +874,4 @@ with tab3:
         st.info("🔄 Comienza actualizando los datos")
 
 st.caption("⚠️ Solo se consideran items con condición 100% en todas las consultas")
+
