@@ -184,7 +184,7 @@ def calculate_historical_stats(transactions):
     
     return stats
 
-def fetch_active_offers(code: str, pages=1, limit=30):
+def fetch_active_offers(code: str, pages=1, limit=50):
     """Trae todas las ofertas activas para un item específico (solo state=100%)"""
     offers = []
     cursor = None
@@ -512,7 +512,7 @@ with col1:
 with col2:
     st.subheader("Ofertas Activas")
     offer_pages = st.number_input("Páginas", min_value=1, value=1, key="offer_pages")
-    offer_limit = st.number_input("Límite por página", min_value=1, max_value=30, value=15, key="offer_limit")
+    offer_limit = st.number_input("Límite por página", min_value=1, max_value=50, value=15, key="offer_limit")
 
 # Botones de acción
 st.header("🚀 Acciones")
@@ -874,4 +874,5 @@ with tab3:
         st.info("🔄 Comienza actualizando los datos")
 
 st.caption("⚠️ Solo se consideran items con condición 100% en todas las consultas")
+
 
