@@ -46,7 +46,7 @@ SCRAP_PER_TIER = {
 EQUIPMENT_TYPES = {
     "armor": {
         "types": ["helmet", "pants", "gloves", "boots", "chest"],
-        "suffixes": ["1", "2", "3", "4", "5"]
+        "suffixes": ["1", "2", "3", "4", "5", "6"]
     },
     "weapons": {
         "types": ["knife", "gun", "rifle", "sniper", "tank", "jet"],
