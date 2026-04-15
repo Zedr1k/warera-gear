@@ -8,21 +8,26 @@ from statistics import mean
 import plotly.express as px
 
 # =========================
-# CONFIG API
+# CONFIG API (REAL)
 # =========================
 
-API_KEY = "wae_01ad18a7153dc706fcdc009f2c567b008eb5db21cf551884497ebc5bab2fd4f9"
+TRANX_API = "https://api4.warera.io/trpc/transaction.getPaginatedTransactions?batch=1"
+OFFERS_API = "https://api4.warera.io/trpc/itemOffer.getItemOffers?batch=1"
 
 COMMON_HEADERS = {
-    "accept": "application/json, text/plain, */*",
-    "x-api-key": API_KEY,
+    "accept": "*/*",
+    "content-type": "application/json",
     "origin": "https://app.warera.io",
     "referer": "https://app.warera.io/",
     "user-agent": "Mozilla/5.0"
 }
 
-TRANX_API = "https://api2.warera.io/trpc/transaction.getPaginatedTransactions"
-OFFERS_API = "https://api2.warera.io/trpc/itemOffer.getItemOffers"
+# ⚠️ REEMPLAZAR CON TUS COOKIES REALES
+COOKIES = {
+    "cf_clearance": "PEGAR_AQUI",
+    "jwt": "PEGAR_AQUI",
+    "jwtdev": "PEGAR_AQUI"
+}
 
 # =========================
 # ITEMS
@@ -51,22 +56,30 @@ def generate_codes():
 CODES = generate_codes()
 
 # =========================
-# REQUEST SAFE
+# REQUEST (POST TRPC)
 # =========================
 
-def safe_get(url, params):
+def safe_post(url, payload):
     try:
-        r = requests.get(url, params=params, headers=COMMON_HEADERS)
+        r = requests.post(
+            url,
+            headers=COMMON_HEADERS,
+            cookies=COOKIES,
+            json={"0": payload}
+        )
+
         if r.status_code != 200:
             print("ERROR:", r.status_code, r.text)
             return None
+
         return r.json()
+
     except Exception as e:
         print("REQUEST ERROR:", e)
         return None
 
 # =========================
-# FETCH
+# FETCH DATA
 # =========================
 
 def fetch_historical_transactions(code, pages=1, limit=50):
@@ -80,12 +93,11 @@ def fetch_historical_transactions(code, pages=1, limit=50):
             "itemCode": code,
             "condition": "100%"
         }
+
         if cursor:
             payload["cursor"] = cursor
 
-        params = {"batch": "1", "input": json.dumps({"0": payload})}
-        data = safe_get(TRANX_API, params)
-
+        data = safe_post(TRANX_API, payload)
         if not data:
             break
 
@@ -114,12 +126,11 @@ def fetch_active_offers(code, pages=1, limit=30):
             "itemCode": code,
             "condition": "100%"
         }
+
         if cursor:
             payload["cursor"] = cursor
 
-        params = {"batch": "1", "input": json.dumps({"0": payload})}
-        data = safe_get(OFFERS_API, params)
-
+        data = safe_post(OFFERS_API, payload)
         if not data:
             break
 
@@ -156,7 +167,6 @@ def build_price_buckets(transactions):
             continue
 
         bucket = int(total / 10) * 10
-
         buckets.setdefault(bucket, []).append(price)
 
     bucket_stats = {}
@@ -165,8 +175,6 @@ def build_price_buckets(transactions):
         if prices:
             bucket_stats[b] = {
                 "mean": mean(prices),
-                "min": min(prices),
-                "max": max(prices),
                 "count": len(prices)
             }
 
@@ -190,7 +198,7 @@ def estimate_price(bucket_stats, total_skill):
 # =========================
 
 st.set_page_config(layout="wide")
-st.title("Warera Analyzer (Fixed Version)")
+st.title("Warera Analyzer (Full Fixed - POST + Cookies)")
 
 pages = st.sidebar.slider("Pages", 1, 5, 1)
 
@@ -229,7 +237,7 @@ if st.button("Actualizar Datos"):
     st.write("Cantidad de ofertas analizadas:", len(all_offers))
 
     if not all_offers:
-        st.warning("No se encontraron ofertas o no se pudieron calcular precios.")
+        st.warning("No se encontraron ofertas o falló la autenticación.")
         st.stop()
 
     df = pd.DataFrame(all_offers)
