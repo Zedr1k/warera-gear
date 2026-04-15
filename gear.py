@@ -4,7 +4,6 @@ import requests
 import json
 import time
 import pandas as pd
-import numpy as np
 from statistics import mean
 import plotly.express as px
 
@@ -26,7 +25,7 @@ TRANX_API = "https://api2.warera.io/trpc/transaction.getPaginatedTransactions"
 OFFERS_API = "https://api2.warera.io/trpc/itemOffer.getItemOffers"
 
 # =========================
-# CONFIG ITEMS
+# ITEMS
 # =========================
 
 EQUIPMENT_TYPES = {
@@ -52,7 +51,7 @@ def generate_codes():
 CODES = generate_codes()
 
 # =========================
-# FETCH DATA
+# REQUEST SAFE
 # =========================
 
 def safe_get(url, params):
@@ -66,6 +65,9 @@ def safe_get(url, params):
         print("REQUEST ERROR:", e)
         return None
 
+# =========================
+# FETCH
+# =========================
 
 def fetch_historical_transactions(code, pages=1, limit=50):
     transactions = []
@@ -146,29 +148,27 @@ def build_price_buckets(transactions):
     buckets = {}
 
     for tx in transactions:
-        price = tx["money"]
-        skills = tx["item"]["skills"]
+        price = tx.get("money", 0)
+        skills = tx["item"].get("skills", {})
         total = sum(skills.values())
 
-        if total == 0:
+        if price <= 0 or total == 0:
             continue
 
         bucket = int(total / 10) * 10
 
-        if bucket not in buckets:
-            buckets[bucket] = []
-
-        buckets[bucket].append(price)
+        buckets.setdefault(bucket, []).append(price)
 
     bucket_stats = {}
 
     for b, prices in buckets.items():
-        bucket_stats[b] = {
-            "mean": mean(prices),
-            "min": min(prices),
-            "max": max(prices),
-            "count": len(prices)
-        }
+        if prices:
+            bucket_stats[b] = {
+                "mean": mean(prices),
+                "min": min(prices),
+                "max": max(prices),
+                "count": len(prices)
+            }
 
     return bucket_stats
 
@@ -182,21 +182,19 @@ def estimate_price(bucket_stats, total_skill):
     if bucket in bucket_stats:
         return bucket_stats[bucket]["mean"]
 
-    # fallback: closest bucket
     closest = min(bucket_stats.keys(), key=lambda x: abs(x - bucket))
     return bucket_stats[closest]["mean"]
 
 # =========================
-# STREAMLIT
+# STREAMLIT UI
 # =========================
 
 st.set_page_config(layout="wide")
-st.title("Warera Analyzer (API KEY + Pricing Model)")
+st.title("Warera Analyzer (Fixed Version)")
 
 pages = st.sidebar.slider("Pages", 1, 5, 1)
 
 if st.button("Actualizar Datos"):
-    all_stats = {}
     all_offers = []
 
     progress = st.progress(0)
@@ -207,33 +205,52 @@ if st.button("Actualizar Datos"):
 
         offers = fetch_active_offers(code, pages)
 
+        print(f"{code} -> txs: {len(txs)}, offers: {len(offers)}")
+
         for o in offers:
             est = estimate_price(bucket_stats, o["total_skill"])
-            if est:
-                edge = est - o["price"]
 
-                all_offers.append({
-                    "code": code,
-                    "price": o["price"],
-                    "est_price": est,
-                    "edge": edge,
-                    "total_skill": o["total_skill"]
-                })
+            if est is None:
+                continue
 
-        progress.progress((i+1)/len(CODES))
+            edge = est - o["price"]
+
+            all_offers.append({
+                "code": code,
+                "price": o["price"],
+                "est_price": est,
+                "edge": edge,
+                "total_skill": o["total_skill"]
+            })
+
+        progress.progress((i + 1) / len(CODES))
         time.sleep(0.05)
 
+    st.write("Cantidad de ofertas analizadas:", len(all_offers))
+
+    if not all_offers:
+        st.warning("No se encontraron ofertas o no se pudieron calcular precios.")
+        st.stop()
+
     df = pd.DataFrame(all_offers)
+
+    if "edge" not in df.columns:
+        st.error("Error: columna 'edge' no encontrada")
+        st.write(df.head())
+        st.stop()
+
     df = df.sort_values("edge", ascending=False)
 
     st.session_state["df"] = df
 
+# =========================
+# RESULTADOS
+# =========================
 
 if "df" in st.session_state:
     df = st.session_state["df"]
 
     st.subheader("Mejores oportunidades")
-
     st.dataframe(df.head(50))
 
     fig = px.histogram(df, x="edge", nbins=50)
