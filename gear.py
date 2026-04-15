@@ -187,7 +187,7 @@ st.title("Warera Analyzer (Live Market Only)")
 # Sidebar
 st.sidebar.header("Configuración")
 
-pages = st.sidebar.slider("Pages", 1, 5, 1)
+pages = st.sidebar.slider("Pages", 1, 20, 1)
 scrap_price = st.sidebar.number_input("Precio del scrap", value=0.214)
 
 tab1, tab2 = st.tabs(["🔥 Ofertas", "📉 Price Floors"])
