@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import requests
-import json
 import time
 import pandas as pd
-from statistics import mean
 import plotly.express as px
 
 # =========================
 # CONFIG API
 # =========================
 
-TRANX_API = "https://api4.warera.io/trpc/transaction.getPaginatedTransactions?batch=1"
 OFFERS_API = "https://api4.warera.io/trpc/itemOffer.getItemOffers?batch=1"
 
 COMMON_HEADERS = {
@@ -30,7 +27,7 @@ COOKIES = {
 }
 
 # =========================
-# CONFIG SCRAP
+# SCRAP
 # =========================
 
 SCRAP_PER_TIER = {
@@ -72,10 +69,10 @@ CODES = generate_codes()
 # REQUEST
 # =========================
 
-def safe_post(url, payload):
+def safe_post(payload):
     try:
         r = requests.post(
-            url,
+            OFFERS_API,
             headers=COMMON_HEADERS,
             cookies=COOKIES,
             json={"0": payload}
@@ -92,43 +89,10 @@ def safe_post(url, payload):
         return None
 
 # =========================
-# FETCH
+# FETCH OFFERS ONLY
 # =========================
 
-def fetch_historical_transactions(code, pages=1, limit=50):
-    transactions = []
-    cursor = None
-
-    for _ in range(pages):
-        payload = {
-            "limit": limit,
-            "transactionType": "itemMarket",
-            "itemCode": code,
-            "condition": "100%"
-        }
-
-        if cursor:
-            payload["cursor"] = cursor
-
-        data = safe_post(TRANX_API, payload)
-        if not data:
-            break
-
-        items = data[0]["result"]["data"]["items"]
-
-        for tx in items:
-            itm = tx["item"]
-            if itm.get("state") == itm.get("maxState"):
-                transactions.append(tx)
-
-        cursor = data[0]["result"]["data"].get("nextCursor")
-        if not cursor:
-            break
-
-    return transactions
-
-
-def fetch_active_offers(code, pages=1, limit=30):
+def fetch_offers(code, pages=1, limit=50):
     offers = []
     cursor = None
 
@@ -143,7 +107,7 @@ def fetch_active_offers(code, pages=1, limit=30):
         if cursor:
             payload["cursor"] = cursor
 
-        data = safe_post(OFFERS_API, payload)
+        data = safe_post(payload)
         if not data:
             break
 
@@ -154,7 +118,6 @@ def fetch_active_offers(code, pages=1, limit=30):
             if itm.get("state") == itm.get("maxState"):
                 offers.append({
                     "price": o["price"],
-                    "skills": itm.get("skills", {}),
                     "total_skill": sum(itm.get("skills", {}).values())
                 })
 
@@ -165,24 +128,169 @@ def fetch_active_offers(code, pages=1, limit=30):
     return offers
 
 # =========================
-# PRICING
+# MARKET LOGIC
 # =========================
 
-def build_price_buckets(transactions):
-    buckets = {}
+def build_market_structures(offers):
+    if not offers:
+        return None
 
-    for tx in transactions:
-        price = tx.get("money", 0)
-        total = sum(tx["item"].get("skills", {}).values())
+    df = pd.DataFrame(offers)
 
-        if price <= 0 or total == 0:
+    # price floor global
+    floor = df["price"].min()
+
+    # floor por stat
+    floor_by_stat = df.groupby("total_skill")["price"].min().to_dict()
+
+    return df, floor, floor_by_stat
+
+
+def compute_edges(df):
+    df = df.copy()
+
+    edges = []
+
+    for i, row in df.iterrows():
+        stat = row["total_skill"]
+        price = row["price"]
+
+        # competencia cercana = mismo stat
+        same_stat = df[df["total_skill"] == stat]
+
+        if len(same_stat) <= 1:
+            edges.append(0)
             continue
 
-        bucket = int(total / 10) * 10
-        buckets.setdefault(bucket, []).append(price)
+        # excluir el mismo item
+        competitors = same_stat[same_stat["price"] != price]
 
-    return {k: mean(v) for k, v in buckets.items()}
+        if competitors.empty:
+            edges.append(0)
+            continue
 
+        min_competitor = competitors["price"].min()
+
+        edge = min_competitor - price
+        edges.append(edge)
+
+    df["edge"] = edges
+    return df
+
+# =========================
+# UI
+# =========================
+
+st.set_page_config(layout="wide")
+st.title("Warera Analyzer (Live Market Only)")
+
+# Sidebar
+st.sidebar.header("Configuración")
+
+pages = st.sidebar.slider("Pages", 1, 5, 1)
+scrap_price = st.sidebar.number_input("Precio del scrap", value=0.214)
+
+tab1, tab2 = st.tabs(["🔥 Ofertas", "📉 Price Floors"])
+
+# =========================
+# FETCH BUTTON
+# =========================
+
+if st.button("Actualizar Datos"):
+    all_offers = []
+    all_floors = {}
+
+    progress = st.progress(0)
+
+    for i, code in enumerate(CODES):
+        offers = fetch_offers(code, pages)
+
+        if not offers:
+            continue
+
+        df, floor, floor_by_stat = build_market_structures(offers)
+
+        df["code"] = code
+        df = compute_edges(df)
+
+        all_offers.append(df)
+        all_floors[code] = (floor, floor_by_stat)
+
+        progress.progress((i + 1) / len(CODES))
+        time.sleep(0.05)
+
+    if all_offers:
+        final_df = pd.concat(all_offers)
+        st.session_state["df"] = final_df
+        st.session_state["floors"] = all_floors
+
+# =========================
+# TAB 1
+# =========================
+
+with tab1:
+    if "df" in st.session_state:
+        df = st.session_state["df"].sort_values("edge", ascending=False)
+
+        st.subheader("Mejores oportunidades (vs competencia directa)")
+        st.dataframe(df.head(50))
+
+        fig = px.histogram(df, x="edge", nbins=50)
+        st.plotly_chart(fig)
+    else:
+        st.info("No hay datos")
+
+# =========================
+# TAB 2
+# =========================
+
+with tab2:
+    st.header("📉 Price Floors (Ofertas actuales)")
+
+    if "floors" not in st.session_state:
+        st.info("Primero actualizá datos")
+    else:
+        floors = st.session_state["floors"]
+
+        selected_item = st.selectbox("Seleccionar item", sorted(floors.keys()))
+
+        floor, floor_by_stat = floors[selected_item]
+
+        # detectar tier
+        if selected_item[-1].isdigit():
+            tier = int(selected_item[-1])
+        else:
+            weapon_tier_map = {
+                "knife": 1,
+                "gun": 2,
+                "rifle": 3,
+                "sniper": 4,
+                "tank": 5,
+                "jet": 6
+            }
+            tier = weapon_tier_map.get(selected_item, 1)
+
+        scrap_value = SCRAP_PER_TIER.get(tier, 0) * scrap_price
+
+        st.metric("Precio mínimo global", f"{floor:.2f}")
+        st.metric("Valor scrap", f"{scrap_value:.2f}")
+
+        rows = []
+
+        for stat, price in floor_by_stat.items():
+            rows.append({
+                "stat": stat,
+                "min_price": price,
+                "scrap_value": scrap_value,
+                "vs_scrap": price - scrap_value
+            })
+
+        df = pd.DataFrame(rows).sort_values("stat")
+
+        st.dataframe(df)
+
+        fig = px.line(df, x="stat", y="min_price", title="Price Floor por stat")
+        st.plotly_chart(fig)
 
 def estimate_price(bucket_stats, total_skill):
     if not bucket_stats:
